@@ -2,64 +2,92 @@ import time
 import json
 from pathlib import Path
 from datetime import datetime
-import math
 import requests
 import os
+import logging
 
+# ========= 路径 & 日志配置 =========
 
+BASE_DIR = Path(__file__).parent
 
-# ========= 配置区 =========
+# 状态文件 & 配置文件 & 日志文件都放在脚本同目录
+STATE_FILE = BASE_DIR / "etf_monitor_state.json"
+CONFIG_FILE = BASE_DIR / "etf.conf"
+LOG_FILE = BASE_DIR / "etf.log"
 
-STATE_FILE = Path("etf_monitor_state.json")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
-# 监控的ETF标的配置文件
-CONFIG_FILE = Path(__file__).parent / "etf.conf"
+# ========= 加载配置 =========
 
 def load_config():
     if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            if "ETF_CONFIG" not in cfg:
+                logging.error(f"配置文件 {CONFIG_FILE} 中缺少 'ETF_CONFIG' 字段。")
+                sys.exit(1)
+            return cfg
+        except Exception as e:
+            logging.exception(f"读取配置文件 {CONFIG_FILE} 失败")
+            sys.exit(1)
     else:
-        print(f"配置文件 {CONFIG_FILE} 不存在，请先创建。")
-        exit(1)
+        logging.error(f"配置文件 {CONFIG_FILE} 不存在，请先创建 etf.conf。")
+        sys.exit(1)
+
 
 full_config = load_config()
-
 ETF_CONFIG = full_config["ETF_CONFIG"]
 
+# ========= PushPlus 设置 =========
 
-# pushplus 设置
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
 PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
-
-
-POLL_INTERVAL_SECONDS = 10  # 调试先改成 10 秒一轮，确认逻辑正确后再改回 600（10分钟）
-
+# 轮询间隔（秒）
+POLL_INTERVAL_SECONDS = 10  # 调试用，实盘可改为 600（10 分钟）
 
 # ========= 状态读写 =========
 
 def load_state():
     if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            # 如果配置里新增了 ETF，状态里可能没有，补上
+            for name in ETF_CONFIG.keys():
+                if name not in state:
+                    state[name] = {"last_price": None, "tick": 0}
+            return state
+        except Exception as e:
+            logging.exception(f"读取状态文件 {STATE_FILE} 失败，重新初始化状态")
     # 初始 state
     return {name: {"last_price": None, "tick": 0} for name in ETF_CONFIG.keys()}
 
 
 def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.exception(f"保存状态到 {STATE_FILE} 失败")
 
 
-# ========= 获取价格函数=========
+# ========= 获取价格函数 =========
 
-import requests
-
-PRICE_SCALE = {     # 价格缩放表
+# 某些 ETF 在东财接口里价格放大 10 倍，需要缩放
+PRICE_SCALE = {
     "SH520890": 0.1,
     "SH515080": 0.1,
 }
+
 
 def get_price_from_api(symbol: str, tick: int = 0) -> float:
     """
@@ -107,10 +135,6 @@ def get_price_from_api(symbol: str, tick: int = 0) -> float:
     return round(float(price), 3)
 
 
-
-
-
-
 # ========= 通知函数 =========
 
 def send_notification(message: str):
@@ -118,8 +142,8 @@ def send_notification(message: str):
     使用 PushPlus 推送通知到你的微信/手机。
     """
     if not PUSHPLUS_TOKEN:
-        # 没填 token 就直接打印
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 通知（未配置token，仅打印）：\n{message}\n")
+        # 没填 token 就直接写日志
+        logging.warning(f"通知（未配置 PUSHPLUS_TOKEN，仅写日志，不推送）：\n{message}\n")
         return
 
     payload = {
@@ -134,27 +158,27 @@ def send_notification(message: str):
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != 200:
-            print(f"[PushPlus] 推送失败: {data}")
+            logging.error(f"[PushPlus] 推送失败: {data}")
         else:
-            print(f"[PushPlus] 推送成功: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logging.info(f"[PushPlus] 推送成功：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
-        print(f"[PushPlus] 推送异常: {e}")
-        print("消息内容如下：")
-        print(message)
+        logging.exception("[PushPlus] 推送异常")
+        logging.error(f"消息内容如下：\n{message}")
 
 
-# 根据股息率决定网格和买卖权限
+# ========= 根据股息率决定网格和买卖权限 =========
 
 def decide_grid_and_mode(cfg: dict):
     """
     根据当前配置里的股息率，决定：
     - 当前网格间距 grid_pct
     - 是否允许买入 can_buy
+    - 是否允许卖出 can_sell（目前恒为 True，可扩展）
     - 当前估值档位 label（用于提醒）
     """
     dy = cfg.get("dividend_yield", None)
     if dy is None:
-        # 如果你懒得填股息率，就用默认 grid_pct，不限制买入
+        # 如果你懒得填股息率，就用默认 grid_pct，不限制买入卖出
         return cfg.get("grid_pct", 0.04), True, True, "未知"
 
     # A 档：超级低估（>= 7%）
@@ -174,16 +198,21 @@ def decide_grid_and_mode(cfg: dict):
     # 网格用更宽一点，避免频繁交易
     return cfg.get("grid_expensive", 0.06), False, True, f"D档偏贵 (DY={dy:.1%})"
 
+
 # ========= 核心：单只 ETF 网格检查 =========
 
 def check_signals_for_etf(name: str, cfg: dict, state: dict):
+    """
+    对单只 ETF 进行网格检查。
+    返回要发的消息字符串列表。
+    """
     symbol = cfg["symbol"]
     base_price = cfg["base_price"]
+
     # 根据股息率决定当前网格和买卖模式
     grid_pct, can_buy, can_sell, dy_label = decide_grid_and_mode(cfg)
 
-
-    # tick 用来让模拟价格随时间变化
+    # tick 用来让价格查询有个“时间推进”的标记（目前只用于日志 / 模拟）
     tick = state.get(name, {}).get("tick", 0) + 1
     state[name]["tick"] = tick
 
@@ -192,11 +221,11 @@ def check_signals_for_etf(name: str, cfg: dict, state: dict):
 
     if name not in state:
         state[name] = {}
-    state[name]["last_price"] = current_price
 
     # 第一次运行：只记录价格，不发信号
     if last_price is None:
-        print(f"{name} 首次价格记录: {current_price}")
+        logging.info(f"{name} 首次价格记录: {current_price}，股息率档位：{dy_label}")
+        state[name]["last_price"] = current_price
         return []
 
     messages = []
@@ -207,42 +236,50 @@ def check_signals_for_etf(name: str, cfg: dict, state: dict):
     # 格子编号 n: price = base_price * (1 + n * grid_pct)
     current_grid = int((price_ratio_now - 1) / grid_pct)
     last_grid = int((price_ratio_last - 1) / grid_pct)
-    
-    print(f"{name} 当前价格: {current_price}")
 
+    logging.info(f"{name} 当前价格: {current_price}，股息率档位：{dy_label}，当前格子: {current_grid}，上次格子: {last_grid}")
 
-    if current_grid > last_grid:
-        # 向上穿越，触发卖出网格
+    # 向上穿越，触发卖出网格
+    if current_grid > last_grid and can_sell:
         for g in range(last_grid + 1, current_grid + 1):
             level_price = base_price * (1 + g * grid_pct)
-            msg = (f"{name} ({symbol}) 触发【卖出网格】:\n"
-                   f"- 网格编号: {g}\n"
-                   f"- 参考卖出价: {level_price:.4f}\n"
-                   f"- 当前价: {current_price:.4f}\n"
-                   f"- 建议：减一档网格仓（例如减 1% 总资金），不动底仓。")
+            msg = (
+                f"{name} ({symbol}) 触发【卖出网格】:\n"
+                f"- 股息率档位: {dy_label}\n"
+                f"- 网格编号: {g}\n"
+                f"- 当前网格间距: {grid_pct:.2%}\n"
+                f"- 参考卖出价: {level_price:.4f}\n"
+                f"- 当前价: {current_price:.4f}\n"
+                f"- 建议：减一档网格仓（例如减 {cfg.get('step_pct', 0.01)*100:.1f}% 总资金），不动底仓。"
+            )
             messages.append(msg)
 
-    elif current_grid < last_grid:
-        # 向下穿越，触发买入网格
+    # 向下穿越，触发买入网格（仅当允许买入时）
+    elif current_grid < last_grid and can_buy:
         for g in range(last_grid - 1, current_grid - 1, -1):
             level_price = base_price * (1 + g * grid_pct)
-            msg = (f"{name} ({symbol}) 触发【买入网格】:\n"
-                   f"- 网格编号: {g}\n"
-                   f"- 参考买入价: {level_price:.4f}\n"
-                   f"- 当前价: {current_price:.4f}\n"
-                   f"- 建议：加一档网格仓（例如加 1% 总资金），不动底仓。")
+            msg = (
+                f"{name} ({symbol}) 触发【买入网格】:\n"
+                f"- 股息率档位: {dy_label}\n"
+                f"- 网格编号: {g}\n"
+                f"- 当前网格间距: {grid_pct:.2%}\n"
+                f"- 参考买入价: {level_price:.4f}\n"
+                f"- 当前价: {current_price:.4f}\n"
+                f"- 建议：加一档网格仓（例如加 {cfg.get('step_pct', 0.01)*100:.1f}% 总资金），不动底仓。"
+            )
             messages.append(msg)
+
+    # 如果 current_grid < last_grid 但 can_buy=False（偏贵区域），则不会发买入信号
 
     state[name]["last_price"] = current_price
     return messages
-
 
 
 # ========= 主循环 =========
 
 def main_loop():
     state = load_state()
-    print("ETF 网格监控（调试版）启动...")
+    logging.info("ETF 网格监控脚本启动完成。")
 
     while True:
         all_messages = []
@@ -252,7 +289,7 @@ def main_loop():
                 msgs = check_signals_for_etf(name, cfg, state)
                 all_messages.extend(msgs)
             except Exception as e:
-                print(f"{name} 检查信号时出错: {e}")
+                logging.exception(f"{name} 检查信号时出错")
 
         if all_messages:
             full_msg = "\n\n".join(all_messages)
@@ -264,5 +301,3 @@ def main_loop():
 
 if __name__ == "__main__":
     main_loop()
-
-
