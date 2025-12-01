@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 
-# 自动为脚本加执行权限（即使你是 bash etf.sh，也不会出问题）
+# 自动给脚本加执行权限
 chmod +x "$0"
 
 # ========= 基本配置 =========
 
-# 当前脚本所在目录（你是 wget 到 /root 下，那就是 /root）
+# 当前脚本所在目录（我们会在 ~/etf 下下载并运行）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Python 脚本（监控程序）
+# Python 监控脚本
 PY_SCRIPT="$SCRIPT_DIR/etf.py"
 
-# Python 命令（如果以后用虚拟环境，再改这里）
+# Python 命令（如有虚拟环境，今后可改这里）
 PYTHON_CMD="python3"
 
-# 进程 PID 文件 & 日志文件
+# PID & 日志文件都放在 etf 目录里
 PID_FILE="$SCRIPT_DIR/etf.pid"
 LOG_FILE="$SCRIPT_DIR/etf.log"
 
-# PushPlus 配置文件（不会被提交到 GitHub）
-PUSHPLUS_CONF="$HOME/.etf_pushplus.conf"
+# PushPlus 配置也放在 etf 目录里，不污染 ~
+PUSHPLUS_CONF="$SCRIPT_DIR/pushplus.conf"
 
 
 # ========= 公共函数 =========
@@ -48,7 +48,6 @@ start_etf() {
     fi
 
     echo "启动 etf.py ..."
-
     nohup "$PYTHON_CMD" "$PY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     NEW_PID=$!
     echo "$NEW_PID" > "$PID_FILE"
