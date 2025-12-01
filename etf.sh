@@ -85,9 +85,16 @@ stop_etf() {
 }
 
 update_script() {
-    echo "从 Git 仓库更新脚本（git pull）..."
-    (cd "$SCRIPT_DIR" && git pull)
+    echo "下载最新 etf.py..."
+    wget -N --no-check-certificate https://raw.githubusercontent.com/byilrq/etf/main/etf.py -O "$SCRIPT_DIR/etf.py"
+
+    if [ $? -eq 0 ]; then
+        echo "etf.py 已成功更新。"
+    else
+        echo "更新失败，请检查网络或 GitHub 路径。"
+    fi
 }
+
 
 config_pushplus() {
     echo "当前 PushPlus 配置文件：$PUSHPLUS_CONF"
