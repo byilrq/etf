@@ -5,26 +5,38 @@ chmod +x "$0"
 
 # ========= 基本配置 =========
 
-# 当前脚本所在目录（我们会在 ~/etf 下下载并运行）
+# 当前脚本所在目录（你是从 /root 运行，那就是 /root）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Python 监控脚本
-PY_SCRIPT="$SCRIPT_DIR/etf.py"
+# 所有运行时文件都放在 etf 子目录中，避免把 /root 搞乱
+ETF_DIR="$SCRIPT_DIR/etf"
 
-# Python 命令（如有虚拟环境，今后可改这里）
+# Python 监控脚本路径
+PY_SCRIPT="$ETF_DIR/etf.py"
+
+# Python 命令（如未来用虚拟环境，再改这里）
 PYTHON_CMD="python3"
 
-# PID & 日志文件都放在 etf 目录里
-PID_FILE="$SCRIPT_DIR/etf.pid"
-LOG_FILE="$SCRIPT_DIR/etf.log"
+# PID & 日志文件也放在 etf 目录
+PID_FILE="$ETF_DIR/etf.pid"
+LOG_FILE="$ETF_DIR/etf.log"
 
-# PushPlus 配置也放在 etf 目录里，不污染 ~
-PUSHPLUS_CONF="$SCRIPT_DIR/pushplus.conf"
+# PushPlus 配置也放在 etf 目录
+PUSHPLUS_CONF="$ETF_DIR/pushplus.conf"
 
 
 # ========= 公共函数 =========
 
+ensure_etf_dir() {
+    if [ ! -d "$ETF_DIR" ]; then
+        echo "创建目录: $ETF_DIR"
+        mkdir -p "$ETF_DIR"
+    fi
+}
+
 start_etf() {
+    ensure_etf_dir
+
     if [ ! -f "$PY_SCRIPT" ]; then
         echo "找不到 $PY_SCRIPT，请先用菜单 3 下载 etf.py。"
         return
@@ -57,6 +69,8 @@ start_etf() {
 }
 
 stop_etf() {
+    ensure_etf_dir
+
     if [ ! -f "$PID_FILE" ]; then
         echo "没有找到 PID 文件，可能 etf.py 未在运行。"
         return
@@ -83,10 +97,12 @@ stop_etf() {
 }
 
 update_script() {
-    echo "下载最新 etf.py ..."
+    ensure_etf_dir
+
+    echo "下载最新 etf.py 到 $ETF_DIR ..."
     wget -N --no-check-certificate \
       https://raw.githubusercontent.com/byilrq/etf/main/etf.py \
-      -O "$SCRIPT_DIR/etf.py"
+      -O "$PY_SCRIPT"
 
     if [ $? -eq 0 ]; then
         echo "etf.py 已成功更新到最新版本。"
@@ -96,6 +112,8 @@ update_script() {
 }
 
 config_pushplus() {
+    ensure_etf_dir
+
     echo "当前 PushPlus 配置文件路径：$PUSHPLUS_CONF"
 
     if [ -f "$PUSHPLUS_CONF" ]; then
@@ -131,6 +149,8 @@ config_pushplus() {
 }
 
 show_status() {
+    ensure_etf_dir
+
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
@@ -147,7 +167,8 @@ show_status() {
 show_menu() {
     echo "==============================="
     echo "  ETF 网格监控 管理菜单"
-    echo " （脚本目录：$SCRIPT_DIR）"
+    echo " （管理脚本目录：$SCRIPT_DIR）"
+    echo " （运行文件目录：$ETF_DIR）"
     echo "==============================="
     echo "1) 启动脚本"
     echo "2) 停止脚本"
