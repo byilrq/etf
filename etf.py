@@ -10,21 +10,47 @@ import requests
 
 STATE_FILE = Path("etf_monitor_state.json")
 
-# 你要监控的两只 ETF，先随便起名字，后面替换成自己的代码即可
+# 监控的ETF，替换代码即可
+
 ETF_CONFIG = {
-    "港股红利ETF": {  
-        "symbol": "SH520890",  # 换成你真实的代码，注意前面加 SH / SZ
-        "base_price": 1.47,   # 你实际底仓买入价
-        "grid_pct": 0.04      # 网格间距 4%
+    "港股红利ETF": {
+        "symbol": "SH520890",
+        "base_price": 1.10,
+
+        # 当前估计股息率（手动维护，先简单来）
+        "dividend_yield": 0.068,   # 6.8%
+
+        # 不同估值档位的网格间距（可以按你喜好微调）
+        "grid_low": 0.03,          # 股息率 >= 7% 时
+        "grid_mid": 0.04,          # 股息率 6~7%
+        "grid_high": 0.05,         # 股息率 5~6%
+        "grid_expensive": 0.06,    # 股息率 <5% 时（只是给卖出用）
+
+        # 每个网格建议加/减仓的比例（占总资金）
+        "step_pct": 0.01           # 每格 1% 总资金
     },
-    "A股红利ETF": {  
-        "symbol": "SZ515080,   
-        "base_price": 1.50,
-        "grid_pct": 0.04
+    "A股红利ETF": {
+        "symbol": "SH515080",
+        "base_price": 1.20,
+        "dividend_yield": 0.062,   # 6.2%
+
+        "grid_low": 0.03,
+        "grid_mid": 0.04,
+        "grid_high": 0.05,
+        "grid_expensive": 0.06,
+
+        "step_pct": 0.01
     }
 }
 
-POLL_INTERVAL_SECONDS = 600  # 调试先改成 10 秒一轮，确认逻辑正确后再改回 600（10分钟）
+
+# pushplus 设置
+PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
+PUSHPLUS_URL = "http://www.pushplus.plus/send"
+
+
+
+POLL_INTERVAL_SECONDS = 10  # 调试先改成 10 秒一轮，确认逻辑正确后再改回 600（10分钟）
 
 
 # ========= 状态读写 =========
@@ -44,12 +70,21 @@ def save_state(state):
 
 # ========= 获取价格函数=========
 
+import requests
+
+PRICE_SCALE = {     # 价格缩放表
+    "SH520890": 0.1,
+    "SH515080": 0.1,
+}
+
 def get_price_from_api(symbol: str, tick: int = 0) -> float:
     """
     使用东方财富 push2 接口获取实时价格。
-    symbol 格式建议：'SH515080' 或 'SZ159920'
+    symbol 格式建议：'SH515080' 或 'SZ159920' 等。
     """
-    symbol = symbol.upper().strip()
+    raw_symbol = symbol.upper().strip()
+    symbol = raw_symbol
+
     if symbol.startswith("SH"):
         market = "1"   # 1 = 上证
         code = symbol[2:]
@@ -57,7 +92,6 @@ def get_price_from_api(symbol: str, tick: int = 0) -> float:
         market = "0"   # 0 = 深证
         code = symbol[2:]
     else:
-        # 默认按上证处理，你也可以根据自己实际情况改
         market = "1"
         code = symbol
 
@@ -79,9 +113,17 @@ def get_price_from_api(symbol: str, tick: int = 0) -> float:
     if not data.get("data") or data["data"].get("f43") in (None, 0):
         raise ValueError(f"行情数据为空: {symbol}, 返回: {data}")
 
-    price_raw = data["data"]["f43"]   # 单位是“分”
-    price = price_raw / 100.0
-    return float(price)
+    price_raw = data["data"]["f43"]   # 一般是“分”，有些品种再放大 10 倍
+    price = price_raw / 100.0        # 先按常规 /100
+
+    # 特定 ETF 价格再缩放（比如 520890 / 515080）
+    scale = PRICE_SCALE.get(raw_symbol, 1.0)
+    price = price * scale
+
+    return round(float(price), 3)
+
+
+
 
 
 
@@ -89,25 +131,73 @@ def get_price_from_api(symbol: str, tick: int = 0) -> float:
 
 def send_notification(message: str):
     """
-    调试阶段先打印到终端。
-    之后你可以在这里加：
-      - 发邮件
-      - Telegram Bot
-      - 企业微信/钉钉机器人 等
+    使用 PushPlus 推送通知到你的微信/手机。
     """
-    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 通知：\n{message}\n")
+    if not PUSHPLUS_TOKEN:
+        # 没填 token 就直接打印
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 通知（未配置token，仅打印）：\n{message}\n")
+        return
 
+    payload = {
+        "token": PUSHPLUS_TOKEN,
+        "title": "ETF 网格信号提醒",
+        "content": message,
+        "template": "txt"  # 纯文本即可
+    }
+
+    try:
+        resp = requests.post(PUSHPLUS_URL, json=payload, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 200:
+            print(f"[PushPlus] 推送失败: {data}")
+        else:
+            print(f"[PushPlus] 推送成功: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        print(f"[PushPlus] 推送异常: {e}")
+        print("消息内容如下：")
+        print(message)
+
+
+# 根据股息率决定网格和买卖权限
+
+def decide_grid_and_mode(cfg: dict):
+    """
+    根据当前配置里的股息率，决定：
+    - 当前网格间距 grid_pct
+    - 是否允许买入 can_buy
+    - 当前估值档位 label（用于提醒）
+    """
+    dy = cfg.get("dividend_yield", None)
+    if dy is None:
+        # 如果你懒得填股息率，就用默认 grid_pct，不限制买入
+        return cfg.get("grid_pct", 0.04), True, True, "未知"
+
+    # A 档：超级低估（>= 7%）
+    if dy >= 0.07:
+        return cfg.get("grid_low", 0.03), True, True, f"A档极低估 (DY={dy:.1%})"
+
+    # B 档：低估（6% ~ 7%）
+    if 0.06 <= dy < 0.07:
+        return cfg.get("grid_mid", 0.04), True, True, f"B档低估 (DY={dy:.1%})"
+
+    # C 档：合理（5% ~ 6%）
+    if 0.05 <= dy < 0.06:
+        # 可以适当放宽一点网格
+        return cfg.get("grid_high", 0.05), True, True, f"C档合理 (DY={dy:.1%})"
+
+    # D 档：偏贵（< 5%）→ 不建议再买，只允许卖
+    # 网格用更宽一点，避免频繁交易
+    return cfg.get("grid_expensive", 0.06), False, True, f"D档偏贵 (DY={dy:.1%})"
 
 # ========= 核心：单只 ETF 网格检查 =========
 
 def check_signals_for_etf(name: str, cfg: dict, state: dict):
-    """
-    对单只 ETF 进行网格检查。
-    返回要发的消息字符串列表。
-    """
     symbol = cfg["symbol"]
     base_price = cfg["base_price"]
-    grid_pct = cfg["grid_pct"]
+    # 根据股息率决定当前网格和买卖模式
+    grid_pct, can_buy, can_sell, dy_label = decide_grid_and_mode(cfg)
+
 
     # tick 用来让模拟价格随时间变化
     tick = state.get(name, {}).get("tick", 0) + 1
@@ -133,6 +223,9 @@ def check_signals_for_etf(name: str, cfg: dict, state: dict):
     # 格子编号 n: price = base_price * (1 + n * grid_pct)
     current_grid = int((price_ratio_now - 1) / grid_pct)
     last_grid = int((price_ratio_last - 1) / grid_pct)
+    
+    print(f"{name} 当前价格: {current_price}")
+
 
     if current_grid > last_grid:
         # 向上穿越，触发卖出网格
@@ -158,6 +251,7 @@ def check_signals_for_etf(name: str, cfg: dict, state: dict):
 
     state[name]["last_price"] = current_price
     return messages
+
 
 
 # ========= 主循环 =========
