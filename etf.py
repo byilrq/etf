@@ -115,6 +115,9 @@ def get_price_from_api(symbol):
 # ===========================
 
 def get_history_close(symbol, days=400):
+    """
+    使用东财 push2 接口获取日线 K 数据（ETF 可用）
+    """
     raw_symbol = symbol.upper()
     if raw_symbol.startswith("SH"):
         market = "1"
@@ -123,7 +126,11 @@ def get_history_close(symbol, days=400):
         market = "0"
         code = raw_symbol[2:]
 
-    url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={market}.{code}&klt=101&fqt=1&lmt={days}"
+    url = (
+        f"https://push2.eastmoney.com/api/qt/stock/kline/get?"
+        f"secid={market}.{code}"
+        f"&klt=101&fqt=1&lmt={days}"
+    )
 
     headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -131,7 +138,8 @@ def get_history_close(symbol, days=400):
     data = resp.json()
 
     if not data.get("data") or not data["data"].get("klines"):
-        raise Exception(f"无法获取历史 K 线: {symbol}")
+        logging.error(f"ETF 无法获取历史 K 线，将尝试使用备用接口: {symbol}")
+        return get_history_close_fallback(symbol, days)
 
     closes = []
     for item in data["data"]["klines"]:
@@ -140,10 +148,44 @@ def get_history_close(symbol, days=400):
 
     return closes
 
-def calc_ma(closes, length):
-    if len(closes) < length:
-        return None
-    return sum(closes[-length:]) / length
+
+def get_history_close_fallback(symbol, days=400):
+    """
+    备用接口（使用 kline/get?fields1=...）
+    防止 ETF 在主接口无数据时崩溃
+    """
+    raw_symbol = symbol.upper()
+    if raw_symbol.startswith("SH"):
+        market = "1"
+        code = raw_symbol[2:]
+    else:
+        market = "0"
+        code = raw_symbol[2:]
+
+    url = (
+        f"https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+        f"fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56"
+        f"&secid={market}.{code}"
+        f"&klt=101&fqt=1&lmt={days}"
+    )
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    resp = requests.get(url, headers=headers, timeout=5)
+    data = resp.json()
+
+    closes = []
+    klines = data.get("data", {}).get("klines", [])
+
+    if not klines:
+        raise Exception(f"两种历史 K 线接口均无法获取数据: {symbol}")
+
+    for line in klines:
+        arr = line.split(",")
+        closes.append(float(arr[2]))
+
+    return closes
+
 
 # ===========================
 # 推送功能
@@ -317,3 +359,4 @@ def main_loop():
 
 if __name__ == "__main__":
     main_loop()
+
