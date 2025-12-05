@@ -663,7 +663,4 @@ while true; do
             echo "无效选项，请重新输入。"
             ;;
     esac
-
-    echo
-    read -r -p "按回车键继续..." _
 done
