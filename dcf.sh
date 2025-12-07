@@ -22,7 +22,7 @@ PID_FILE="$ETF_DIR/dcf.pid"
 LOG_FILE="$ETF_DIR/dcf.log"
 
 # PushPlus 配置也放在 dcf 目录
-PUSHPLUS_CONF="$ETF_DIR/pushplus.conf"
+PUSHPLUS_CONF="$ETF_DIR/push.conf"
 
 
 # ========= 公共函数 =========
@@ -81,6 +81,7 @@ cron_check() {
     echo "$(date '+%Y.%m.%d.%H:%M:%S') [cron-check] 已重新启动 dcf.py，PID=$NEW_PID" >> "$LOG_FILE"
 }
 
+# ========= 启动脚本函数 =========
 start_dcf() {
     ensure_dcf_dir
 
@@ -168,20 +169,91 @@ update_script() {
     fi
 }
 
-config_pushplus() {
+# ========= 推送设置函数 =========
+
+config_push() {
     ensure_dcf_dir
 
-    echo "当前 PushPlus 配置文件路径：$PUSHPLUS_CONF"
+    echo "当前 Push 配置文件路径：$PUSH.CONF"
 
-    if [ -f "$PUSHPLUS_CONF" ]; then
+    if [ -f "$PUSH.CONF" ]; then
         echo "已存在配置文件，当前内容为："
-        grep "PUSHPLUS_TOKEN" "$PUSHPLUS_CONF" || echo "(未找到 PUSHPLUS_TOKEN 行)"
+        echo "------------------------"
+        if grep -q "PUSHPLUS_TOKEN" "$PUSH.CONF"; then
+            grep "PUSHPLUS_TOKEN" "$PUSH.CONF" | head -1
+        else
+            echo "PUSHPLUS_TOKEN: (未配置)"
+        fi
+        
+        if grep -q "TELEGRAM_BOT_TOKEN" "$PUSH.CONF"; then
+            grep "TELEGRAM_BOT_TOKEN" "$PUSH.CONF" | head -1
+        else
+            echo "TELEGRAM_BOT_TOKEN: (未配置)"
+        fi
+        
+        if grep -q "TELEGRAM_CHAT_ID" "$PUSH.CONF"; then
+            grep "TELEGRAM_CHAT_ID" "$PUSH.CONF" | head -1
+        else
+            echo "TELEGRAM_CHAT_ID: (未配置)"
+        fi
+        echo "------------------------"
     else
-        echo "尚未创建 PushPlus 配置文件。"
+        echo "尚未创建 Push 配置文件。"
     fi
 
     echo
-    read -r -p "是否重新设置 PushPlus Token？(y/n): " ans
+    echo "请选择要配置的推送方式："
+    echo "1) PushPlus"
+    echo "2) Telegram"
+    echo "3) 两者都配置"
+    echo "4) 退出"
+    
+    read -r -p "请选择 [1-4]: " choice
+    echo
+    
+    case "$choice" in
+        1)
+            config_pushplus
+            ;;
+        2)
+            config_telegram
+            ;;
+        3)
+            config_pushplus
+            echo
+            config_telegram
+            ;;
+        4)
+            echo "已取消修改。"
+            return
+            ;;
+        *)
+            echo "无效的选择，已取消。"
+            return
+            ;;
+    esac
+    
+    # 如果文件已创建或更新，重新加载配置
+    if [ -f "$PUSH.CONF" ]; then
+        chmod 600 "$PUSH.CONF"
+        echo "配置文件已更新并设置权限为 600。"
+    fi
+}
+
+# 配置 PushPlus 的独立函数
+config_pushplus() {
+    echo "=== 配置 PushPlus ==="
+    
+    # 获取当前的 PushPlus Token（如果存在）
+    local current_token=""
+    if [ -f "$PUSH.CONF" ] && grep -q "PUSHPLUS_TOKEN" "$PUSH.CONF"; then
+        current_token=$(grep "PUSHPLUS_TOKEN" "$PUSH.CONF" | head -1 | cut -d'"' -f2)
+        echo "当前 PushPlus Token: ${current_token:0:8}****"
+    else
+        echo "当前 PushPlus Token: (未配置)"
+    fi
+    
+    read -r -p "是否设置 PushPlus Token？(y/n): " ans
     case "$ans" in
         y|Y)
             read -r -p "请输入 PushPlus Token（注意不要泄露给他人）: " token
@@ -189,18 +261,96 @@ config_pushplus() {
                 echo "Token 为空，取消设置。"
                 return
             fi
-
-            {
-                echo "# 自动生成的 PushPlus 配置"
-                echo "export PUSHPLUS_TOKEN=\"$token\""
-            } > "$PUSHPLUS_CONF"
-
-            chmod 600 "$PUSHPLUS_CONF"
-            echo "已写入 Token 到 $PUSHPLUS_CONF，并设置权限为 600。"
-            echo "下次使用菜单 1 启动时，会自动加载该 Token。"
+            
+            # 创建或更新配置文件
+            if [ ! -f "$PUSH.CONF" ]; then
+                echo "# 自动生成的 Push 配置" > "$PUSH.CONF"
+                echo "# 创建时间: $(date '+%Y-%m-%d %H:%M:%S')" >> "$PUSH.CONF"
+                echo "" >> "$PUSH.CONF"
+            fi
+            
+            # 删除旧的 PUSHPLUS_TOKEN 设置
+            if grep -q "PUSHPLUS_TOKEN" "$PUSH.CONF"; then
+                sed -i '/^export PUSHPLUS_TOKEN=/d' "$PUSH.CONF"
+            fi
+            
+            # 添加新的 PUSHPLUS_TOKEN 设置
+            echo "export PUSHPLUS_TOKEN=\"$token\"" >> "$PUSH.CONF"
+            echo "PushPlus Token 已更新。"
             ;;
         *)
-            echo "已取消修改。"
+            echo "已跳过 PushPlus 配置。"
+            ;;
+    esac
+}
+
+# 配置 Telegram 的独立函数
+config_telegram() {
+    echo "=== 配置 Telegram ==="
+    
+    # 获取当前的 Telegram 配置（如果存在）
+    local current_bot_token=""
+    local current_chat_id=""
+    
+    if [ -f "$PUSH.CONF" ]; then
+        if grep -q "TELEGRAM_BOT_TOKEN" "$PUSH.CONF"; then
+            current_bot_token=$(grep "TELEGRAM_BOT_TOKEN" "$PUSH.CONF" | head -1 | cut -d'"' -f2)
+            echo "当前 Telegram Bot Token: ${current_bot_token:0:8}****"
+        else
+            echo "当前 Telegram Bot Token: (未配置)"
+        fi
+        
+        if grep -q "TELEGRAM_CHAT_ID" "$PUSH.CONF"; then
+            current_chat_id=$(grep "TELEGRAM_CHAT_ID" "$PUSH.CONF" | head -1 | cut -d'"' -f2)
+            echo "当前 Telegram Chat ID: $current_chat_id"
+        else
+            echo "当前 Telegram Chat ID: (未配置)"
+        fi
+    fi
+    
+    read -r -p "是否设置 Telegram 配置？(y/n): " ans
+    case "$ans" in
+        y|Y)
+            # 获取 Bot Token
+            read -r -p "请输入 Telegram Bot Token: " bot_token
+            if [ -z "$bot_token" ]; then
+                echo "Bot Token 为空，取消设置。"
+                return
+            fi
+            
+            # 获取 Chat ID
+            read -r -p "请输入 Telegram Chat ID: " chat_id
+            if [ -z "$chat_id" ]; then
+                echo "Chat ID 为空，取消设置。"
+                return
+            fi
+            
+            # 创建或更新配置文件
+            if [ ! -f "$PUSH.CONF" ]; then
+                echo "# 自动生成的 Push 配置" > "$PUSH.CONF"
+                echo "# 创建时间: $(date '+%Y-%m-%d %H:%M:%S')" >> "$PUSH.CONF"
+                echo "" >> "$PUSH.CONF"
+            fi
+            
+            # 删除旧的 TELEGRAM_BOT_TOKEN 设置
+            if grep -q "TELEGRAM_BOT_TOKEN" "$PUSH.CONF"; then
+                sed -i '/^export TELEGRAM_BOT_TOKEN=/d' "$PUSH.CONF"
+            fi
+            
+            # 删除旧的 TELEGRAM_CHAT_ID 设置
+            if grep -q "TELEGRAM_CHAT_ID" "$PUSH.CONF"; then
+                sed -i '/^export TELEGRAM_CHAT_ID=/d' "$PUSH.CONF"
+            fi
+            
+            # 添加新的 Telegram 配置
+            echo "export TELEGRAM_BOT_TOKEN=\"$bot_token\"" >> "$PUSH.CONF"
+            echo "export TELEGRAM_CHAT_ID=\"$chat_id\"" >> "$PUSH.CONF"
+            
+            echo "Telegram 配置已更新。"
+            echo "提示：请确保你已经将 Bot 添加到群组并发送过消息。"
+            ;;
+        *)
+            echo "已跳过 Telegram 配置。"
             ;;
     esac
 }
@@ -636,7 +786,7 @@ show_menu() {
     echo "1) 启动脚本"
     echo "2) 停止脚本"
     echo "3) 更新脚本"
-    echo "4) PushPlus设置"
+    echo "4) Push设置"
     echo "5) 查看运行状态"
     echo "6) 分析收益"
     echo "0) 退出"
@@ -652,7 +802,7 @@ while true; do
         1) start_dcf ;;
         2) stop_dcf ;;
         3) update_script ;;
-        4) config_pushplus ;;
+        4) config_push ;;
         5) show_status ;;
         6) dcf_profit ;;
         0)
