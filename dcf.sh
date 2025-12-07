@@ -8,26 +8,26 @@ chmod +x "$0"
 # 当前脚本所在目录（你是从 /root 运行，那就是 /root）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 所有运行时文件都放在 etf 子目录中，避免把 /root 搞乱
-ETF_DIR="$SCRIPT_DIR/etf"
+# 所有运行时文件都放在 dcf 子目录中，避免把 /root 搞乱
+ETF_DIR="$SCRIPT_DIR/dcf"
 
 # Python 监控脚本路径
-PY_SCRIPT="$ETF_DIR/etf.py"
+PY_SCRIPT="$ETF_DIR/dcf.py"
 
 # Python 命令（如未来用虚拟环境，再改这里）
 PYTHON_CMD="python3"
 
-# PID & 日志文件也放在 etf 目录
-PID_FILE="$ETF_DIR/etf.pid"
-LOG_FILE="$ETF_DIR/etf.log"
+# PID & 日志文件也放在 dcf 目录
+PID_FILE="$ETF_DIR/dcf.pid"
+LOG_FILE="$ETF_DIR/dcf.log"
 
-# PushPlus 配置也放在 etf 目录
+# PushPlus 配置也放在 dcf 目录
 PUSHPLUS_CONF="$ETF_DIR/pushplus.conf"
 
 
 # ========= 公共函数 =========
 
-ensure_etf_dir() {
+ensure_dcf_dir() {
     if [ ! -d "$ETF_DIR" ]; then
         echo "创建目录: $ETF_DIR"
         mkdir -p "$ETF_DIR"
@@ -36,24 +36,24 @@ ensure_etf_dir() {
 
 
 add_cron_watchdog() {
-    # 每小时整点检查一次 etf.py 是否在跑
-    local cron_line="0 * * * * bash $SCRIPT_DIR/etf.sh --cron-check >/dev/null 2>&1"
+    # 每小时整点检查一次 dcf.py 是否在跑
+    local cron_line="0 * * * * bash $SCRIPT_DIR/dcf.sh --cron-check >/dev/null 2>&1"
 
     # 先删掉旧的同类行，再追加新的，避免重复
-    (crontab -l 2>/dev/null | grep -v "etf.sh --cron-check"; echo "$cron_line") | crontab -
+    (crontab -l 2>/dev/null | grep -v "dcf.sh --cron-check"; echo "$cron_line") | crontab -
 
     echo "已在 crontab 中添加每小时检查任务。"
 }
 
 remove_cron_watchdog() {
-    # 删除所有包含 etf.sh --cron-check 的行
-    crontab -l 2>/dev/null | grep -v "etf.sh --cron-check" | crontab - 2>/dev/null || true
+    # 删除所有包含 dcf.sh --cron-check 的行
+    crontab -l 2>/dev/null | grep -v "dcf.sh --cron-check" | crontab - 2>/dev/null || true
     echo "已从 crontab 中移除检查任务（如存在）。"
 }
 
 cron_check() {
     # 供 cron 调用的检查模式，不进入交互菜单
-    ensure_etf_dir
+    ensure_dcf_dir
 
     # 若有 PushPlus 配置，加载
     if [ -f "$PUSHPLUS_CONF" ]; then
@@ -74,18 +74,18 @@ cron_check() {
     fi
 
     # 走到这里说明进程不在运行 → 自动启动一遍
-    echo "$(date '+%Y.%m.%d.%H:%M:%S') [cron-check] 检测到 etf.py 未运行，自动重启..." >> "$LOG_FILE"
+    echo "$(date '+%Y.%m.%d.%H:%M:%S') [cron-check] 检测到 dcf.py 未运行，自动重启..." >> "$LOG_FILE"
     nohup "$PYTHON_CMD" "$PY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     NEW_PID=$!
     echo "$NEW_PID" > "$PID_FILE"
-    echo "$(date '+%Y.%m.%d.%H:%M:%S') [cron-check] 已重新启动 etf.py，PID=$NEW_PID" >> "$LOG_FILE"
+    echo "$(date '+%Y.%m.%d.%H:%M:%S') [cron-check] 已重新启动 dcf.py，PID=$NEW_PID" >> "$LOG_FILE"
 }
 
-start_etf() {
-    ensure_etf_dir
+start_dcf() {
+    ensure_dcf_dir
 
     if [ ! -f "$PY_SCRIPT" ]; then
-        echo "找不到 $PY_SCRIPT，请先用菜单 3 下载 etf.py。"
+        echo "找不到 $PY_SCRIPT，请先用菜单 3 下载 dcf.py。"
         return
     fi
 
@@ -101,17 +101,17 @@ start_etf() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
-            echo "etf.py 已在运行中（PID=$PID），如需重启请先选择“停止脚本”。"
+            echo "dcf.py 已在运行中（PID=$PID），如需重启请先选择“停止脚本”。"
             return
         fi
     fi
 
-    echo "启动 etf.py ..."
+    echo "启动 dcf.py ..."
     nohup "$PYTHON_CMD" "$PY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     NEW_PID=$!
     echo "$NEW_PID" > "$PID_FILE"
 
-    echo "etf.py 已启动，PID=$NEW_PID"
+    echo "dcf.py 已启动，PID=$NEW_PID"
     echo "日志文件：$LOG_FILE"
 
     # 添加 cron 看门狗
@@ -119,11 +119,11 @@ start_etf() {
 }
 
 
-stop_etf() {
-    ensure_etf_dir
+stop_dcf() {
+    ensure_dcf_dir
 
     if [ ! -f "$PID_FILE" ]; then
-        echo "没有找到 PID 文件，可能 etf.py 未在运行。"
+        echo "没有找到 PID 文件，可能 dcf.py 未在运行。"
         # 既然都停了，也顺手移除 cron 看门狗
         remove_cron_watchdog
         return
@@ -137,7 +137,7 @@ stop_etf() {
         return
     fi
 
-    echo "正在停止 etf.py (PID=$PID)..."
+    echo "正在停止 dcf.py (PID=$PID)..."
     kill "$PID"
 
     sleep 2
@@ -147,29 +147,29 @@ stop_etf() {
     fi
 
     rm -f "$PID_FILE"
-    echo "etf.py 已停止。"
+    echo "dcf.py 已停止。"
 
     # 停止时移除 cron 看门狗
     remove_cron_watchdog
 }
 
 update_script() {
-    ensure_etf_dir
+    ensure_dcf_dir
 
-    echo "下载最新 etf.py 到 $ETF_DIR ..."
+    echo "下载最新 dcf.py 到 $ETF_DIR ..."
     wget -N --no-check-certificate \
-      https://raw.githubusercontent.com/byilrq/etf/main/etf.py \
+      https://raw.githubusercontent.com/byilrq/dcf/main/dcf.py \
       -O "$PY_SCRIPT"
 
     if [ $? -eq 0 ]; then
-        echo "etf.py 已成功更新到最新版本。"
+        echo "dcf.py 已成功更新到最新版本。"
     else
         echo "更新失败，请检查网络或 GitHub 路径。"
     fi
 }
 
 config_pushplus() {
-    ensure_etf_dir
+    ensure_dcf_dir
 
     echo "当前 PushPlus 配置文件路径：$PUSHPLUS_CONF"
 
@@ -207,28 +207,28 @@ config_pushplus() {
 
 # 状态查询含cron 
 show_status() {
-    ensure_etf_dir
+    ensure_dcf_dir
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
-            echo "etf.py 正在运行（PID=$PID）。"
+            echo "dcf.py 正在运行（PID=$PID）。"
         else
             echo "PID 文件存在，但进程未运行。"
         fi
     else
-        echo "etf.py 当前未在运行。"
+        echo "dcf.py 当前未在运行。"
     fi
     echo "当前cron任务："
-    crontab -l 2>/dev/null | grep "etf.sh --cron-check" || echo "无相关cron任务。"
+    crontab -l 2>/dev/null | grep "dcf.sh --cron-check" || echo "无相关cron任务。"
 }
 
 # ===============================================================
 #                          利润计算函数
 # ===============================================================
-etf_profit() {
+dcf_profit() {
     local log_file="${ETF_DIR}/trade_log.csv"
-    local state_file="${ETF_DIR}/etf_monitor_state.json"
-    local config_file="${ETF_DIR}/etf.conf"
+    local state_file="${ETF_DIR}/dcf_monitor_state.json"
+    local config_file="${ETF_DIR}/dcf.conf"
 
     echo "================================="
     echo "  ETF 策略收益分析（修复版）"
@@ -274,7 +274,7 @@ if os.path.exists(state_file_path):
 rows = []
 with open(trade_log_path, newline='', encoding='utf-8') as f:
     reader = csv.DictReader(f)
-    required_cols = {"date", "etf_name", "symbol", "price", "qty", "side", "reason", 
+    required_cols = {"date", "dcf_name", "symbol", "price", "qty", "side", "reason", 
                      "zone", "pos_before", "pos_after", "avg_cost_before", "avg_cost_after"}
     
     if not required_cols.issubset(reader.fieldnames or []):
@@ -457,17 +457,17 @@ class ETFStat:
         return 0.0
 
 # ====== 处理所有交易 ======
-etf_stats = {}
+dcf_stats = {}
 for row in ordered_rows:
     try:
-        name = row.get("etf_name", "").strip() or "UNKNOWN"
+        name = row.get("dcf_name", "").strip() or "UNKNOWN"
         symbol = row.get("symbol", "").strip() or ""
         
         key = (name, symbol)
-        if key not in etf_stats:
-            etf_stats[key] = ETFStat(name, symbol)
+        if key not in dcf_stats:
+            dcf_stats[key] = ETFStat(name, symbol)
         
-        etf_stats[key].process_trade(row)
+        dcf_stats[key].process_trade(row)
         
     except Exception as e:
         print(f"跳过无法处理的记录: {row}, 错误: {e}")
@@ -477,7 +477,7 @@ print(f"\n{'='*60}")
 print("ETF 策略收益分析（基于完整交易记录）")
 print(f"{'='*60}")
 
-if not etf_stats:
+if not dcf_stats:
     print("未找到有效的交易记录")
     sys.exit(0)
 
@@ -489,12 +489,12 @@ total_profit_by_type = defaultdict(float)
 # 获取当前价格信息
 current_prices = {}
 if state:
-    for etf_name, etf_state in state.items():
-        if etf_name == "_meta":
+    for dcf_name, dcf_state in state.items():
+        if dcf_name == "_meta":
             continue
-        current_prices[etf_name] = etf_state.get('last_price', 0)
+        current_prices[dcf_name] = dcf_state.get('last_price', 0)
 
-for (name, symbol), stat in sorted(etf_stats.items(), key=lambda x: x[0][0]):
+for (name, symbol), stat in sorted(dcf_stats.items(), key=lambda x: x[0][0]):
     print(f"\n{'='*50}")
     print(f"标的: {name} ({symbol})")
     print(f"{'-'*50}")
@@ -593,8 +593,8 @@ if total_investment > 0:
     print(f"  综合收益率: {total_return_all:+.2f}%")
 
 # 计算总体年化收益率（简化）
-first_date = min(s.first_trade_date for s in etf_stats.values() if s.first_trade_date)
-last_date = max(s.last_trade_date for s in etf_stats.values() if s.last_trade_date)
+first_date = min(s.first_trade_date for s in dcf_stats.values() if s.first_trade_date)
+last_date = max(s.last_trade_date for s in dcf_stats.values() if s.last_trade_date)
 
 if first_date and last_date:
     total_days = (last_date - first_date).days + 1
@@ -649,12 +649,12 @@ while true; do
     show_menu
     read -r -p "请选择操作: " choice
     case "$choice" in
-        1) start_etf ;;
-        2) stop_etf ;;
+        1) start_dcf ;;
+        2) stop_dcf ;;
         3) update_script ;;
         4) config_pushplus ;;
         5) show_status ;;
-        6) etf_profit ;;
+        6) dcf_profit ;;
         0)
             echo "退出管理脚本。"
             exit 0
