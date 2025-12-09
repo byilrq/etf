@@ -36,13 +36,13 @@ ensure_dcf_dir() {
 
 
 add_cron_watchdog() {
-    # 每小时整点检查一次 dcf.py 是否在跑
-    local cron_line="0 * * * * bash $SCRIPT_DIR/dcf.sh --cron-check >/dev/null 2>&1"
+    # 每5分钟检查一次 dcf.py 是否在跑
+    local cron_line="*/5 * * * * bash $SCRIPT_DIR/dcf.sh --cron-check >/dev/null 2>&1"
 
     # 先删掉旧的同类行，再追加新的，避免重复
     (crontab -l 2>/dev/null | grep -v "dcf.sh --cron-check"; echo "$cron_line") | crontab -
 
-    echo "已在 crontab 中添加每小时检查任务。"
+    echo "已在 crontab 中添加每5分钟检查任务。"
 }
 
 remove_cron_watchdog() {
