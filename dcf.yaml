@@ -1,0 +1,65 @@
+# ---------------------------------------------
+# 全局策略参数
+# ---------------------------------------------
+STRATEGY:
+  loop_interval: 60          # 循环间隔时间(秒)
+  fetch_history_days: 400    # 历史数据获取天数
+  ma_period_short: 150       # MA150 周期
+  ma_period_long: 300        # MA300 周期
+
+  session_start: "09:25"     # 交易开始时间，数据和日志开始更新。
+  session_end: "16:00"       # 交易结束时间
+
+  daily_push_time: "08:00"   # 每日快照推送时间
+  log_rotate_time: "08:00"   # 日志轮转时间
+
+# ---------------------------------------------
+# ETF产品配置
+# ---------------------------------------------
+ETF_CONFIG:
+
+  南方DCF:
+
+    # 基本信息
+    symbol: "SZ159232"       # 交易所代码
+    price_scale: 0.1         # 价格缩放因子（指数ETF 0.1）
+    strategy_run: "yes"      # yes=交易+监控, no=仅监控
+
+    # 仓位配置
+    base_units: 50000
+    target_units: 100000
+    double_target_factor: 2.0  # 最大仓位 = target_units * 2
+
+    # 均线参数（基础修正系数）
+    k150: 1.0                # MA150 基础 K
+    k300: 1.0                # MA300 基础 K
+    ma300_min_coef: 0.85     # MA300 最小修正系数（数据不足时用 MA150 * 该系数）
+
+    # 横盘系数相关参数（全新设计，替代 ATR）
+    sideways_window_30: 30   # MA30 差值和统计窗口长度（天）
+    sideways_window_60: 20   # MA60 差值和统计窗口长度（天）
+    sideways_weight_60: 0.7  # 长周期 MA60 在横盘评分里的权重（0~1，越大越看重 MA60）
+
+    # 横盘对 MA150 的动态修正范围：
+    #   - 动态K 在 [sideways_min_k150, k150] 之间变化
+    #   - 横盘评分越高 => 动态K 越接近 sideways_min_k150（把 MA150 压低）
+    sideways_min_k150: 0.85  # MA150 动态系数的下限（横盘最极端时）
+
+    # 趋势区边界：
+    #   - price >= MA150 * (1 + stop_add_above_percent) 则进入 ABOVE_120 区，只卖不买
+    stop_add_above_percent: 0.2   # 20%：价格 >= MA150*1.2 视为趋势区
+
+    # 趋势卖出参数（ABOVE_120）
+    sell_percent: 0.05            # 趋势区每跨一格，卖出 target_units 的 5%
+    sell_trigger_up_percent: 0.01 # 趋势区步长：相对 MA150 上涨 1% 为一格
+
+    # 箱体网格交易参数（BOX_AREA）
+    grid_box_percent: 0.01        # 箱体区网格步长 1%
+    grid_box_units_percent: 0.05  # 每次网格交易 目标仓位的 5%
+
+    # 倒金字塔加仓（BETWEEN_300_150）
+    pyramid_enabled: true
+    pyramid_steps: 10
+    pyramid_weights: [0.03, 0.055, 0.08, 0.105, 0.13, 0.155, 0.18, 0.205, 0.23, 0.255]
+
+ 
