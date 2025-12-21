@@ -439,8 +439,6 @@ test_telegram() {
 
     if ! command -v curl >/dev/null 2>&1; then
         echo "错误：未安装 curl，无法发送测试消息。"
-        echo "Debian/Ubuntu: apt-get update && apt-get install -y curl"
-        echo "CentOS/RHEL:   yum install -y curl"
         return 1
     fi
 
@@ -449,7 +447,6 @@ test_telegram() {
 
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
         echo "Telegram 未配置完整：需要 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID"
-        echo "请先在菜单中配置 Telegram。"
         return 1
     fi
 
@@ -468,7 +465,8 @@ test_telegram() {
         --data-urlencode "text=${text}" \
         -d "disable_web_page_preview=true" || true)"
 
-    if echo "$resp" | grep -qi '"ok"[[:space:]]*:[[:space:]]*true'; then
+    # 成功：{"ok":true,...}
+    if echo "$resp" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
         echo "Telegram 测试消息发送成功。"
         return 0
     fi
@@ -477,6 +475,7 @@ test_telegram() {
     echo "$resp"
     return 1
 }
+
 
 
 # ============================================
