@@ -254,11 +254,6 @@ update_script() {
 # 推送设置入口（PushPlus & Telegram）
 # 修复：统一使用 $PUSHPLUS_CONF
 # ============================================
-# ============================================
-# 推送设置入口（PushPlus & Telegram）
-# 修复：统一使用 $PUSHPLUS_CONF
-# 增加：测试推送（PushPlus / Telegram）
-# ============================================
 config_push() {
     ensure_dcf_dir
     ensure_push_conf_file
@@ -431,9 +426,13 @@ test_pushplus() {
         --data-urlencode "content=${content}" \
         -d "template=txt" || true)"
 
-    if echo "$resp" | grep -qiE '"code"[[:space:]]*:[[:space:]]*0|success'; then
-        echo "PushPlus 测试消息发送成功。"
-        return 0
+   # PushPlus 有的环境返回 code=200，也有返回 code=0，这里都视为成功
+    local code
+    code="$(echo "$resp" | jq -r '.code' 2>/dev/null || echo "")"
+    if [[ "$code" == "0" || "$code" == "200" ]]; then
+      echo "PushPlus 测试消息发送成功。"
+      echo "PushPlus msgid: $(echo "$resp" | jq -r '.data' 2>/dev/null || true)"
+      return 0
     fi
 
     echo "PushPlus 测试消息可能发送失败，返回："
