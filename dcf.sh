@@ -297,10 +297,6 @@ config_push() {
         6) echo "已取消修改。"; return ;;
         *) echo "无效的选择，已取消。"; return ;;
     esac
-
-    chmod 600 "$PUSHPLUS_CONF" 2>/dev/null || true
-    echo "配置文件权限已设置为 600：$PUSHPLUS_CONF"
-    echo "你现在在 dcf 目录里应该能看到：$(basename "$PUSHPLUS_CONF")"
 }
 
 # ============================================
@@ -400,8 +396,6 @@ test_pushplus() {
 
     if ! command -v curl >/dev/null 2>&1; then
         echo "错误：未安装 curl，无法发送测试消息。"
-        echo "Debian/Ubuntu: apt-get update && apt-get install -y curl"
-        echo "CentOS/RHEL:   yum install -y curl"
         return 1
     fi
 
@@ -417,7 +411,6 @@ test_pushplus() {
     local content="PushPlus 测试消息发送成功 ✅\n时间：$(date '+%Y-%m-%d %H:%M:%S')\n主机：$(hostname)\n"
 
     echo "正在发送 PushPlus 测试消息..."
-    # PushPlus v1 API：form 提交
     local resp
     resp="$(curl -sS --max-time 10 \
         -X POST "http://www.pushplus.plus/send" \
@@ -426,19 +419,17 @@ test_pushplus() {
         --data-urlencode "content=${content}" \
         -d "template=txt" || true)"
 
-   # PushPlus 有的环境返回 code=200，也有返回 code=0，这里都视为成功
-    local code
-    code="$(echo "$resp" | jq -r '.code' 2>/dev/null || echo "")"
-    if [[ "$code" == "0" || "$code" == "200" ]]; then
-      echo "PushPlus 测试消息发送成功。"
-      echo "PushPlus msgid: $(echo "$resp" | jq -r '.data' 2>/dev/null || true)"
-      return 0
+    # 不依赖 jq，用 grep 判断是否成功（兼容 code=0 或 code=200）
+    if echo "$resp" | grep -Eq '"code"[[:space:]]*:[[:space:]]*(0|200)'; then
+        echo "PushPlus 测试消息发送成功。"
+        return 0
     fi
 
     echo "PushPlus 测试消息可能发送失败，返回："
     echo "$resp"
     return 1
 }
+
 # ============================================
 # 发送测试消息到 Telegram
 # ============================================
