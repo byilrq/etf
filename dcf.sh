@@ -154,6 +154,13 @@ PY
         deactivate || true
         return 1
     fi
+echo "已安装的关键包版本："
+"$VPY" - <<'PY'
+import yaml, json5, requests
+print("requests:", requests.__version__)
+print("pyyaml:  ", yaml.__version__)
+print("json5:   ", json5.__version__)
+PY
 
     echo "================================="
     echo "依赖安装完成 ✅"
@@ -1021,19 +1028,52 @@ dcf_backtest() {
         return 1
     fi
 
-    # ✅ 强制用 venv python
     local VPY="$VENV_DIR/bin/python"
+    local VPIP="$VENV_DIR/bin/pip"
+
+    echo "---------------------------------"
+    echo "诊断信息："
+    echo "SCRIPT_DIR=$SCRIPT_DIR"
+    echo "DCF_DIR=$DCF_DIR"
+    echo "VENV_DIR=$VENV_DIR"
+    echo "VPY=$VPY"
+    echo "---------------------------------"
+
     if [[ ! -x "$VPY" ]]; then
         echo "❌ 未找到虚拟环境 Python：$VPY"
         echo "   请先执行：菜单 3) 安装/更新依赖"
         return 1
     fi
 
-    # ✅ 先做依赖自检，避免跑到一半才爆
+    echo "Venv Python: $("$VPY" -V 2>/dev/null || true)"
+    echo "Venv pip:    $("$VPIP" -V 2>/dev/null || true)"
+
+    echo "检查 venv 中是否已安装 pyyaml/json5..."
+    "$VPY" - <<'PY' || true
+import sys, pkgutil
+mods = ["requests","yaml","json5"]
+for m in mods:
+    ok = pkgutil.find_loader(m) is not None
+    print(f"{m:<8} => {'OK' if ok else 'MISSING'}")
+PY
+
+    # ✅ 依赖自检，失败则提示并可选择自动安装
     if ! "$VPY" -c "import requests, yaml, json5" >/dev/null 2>&1; then
-        echo "❌ venv 中缺少依赖 requests/yaml/json5"
-        echo "   请先执行：菜单 3) 安装/更新依赖"
-        echo "   或手动：source $VENV_DIR/bin/activate && pip install -U requests pyyaml json5"
+        echo "❌ venv 中缺少依赖 requests / pyyaml / json5"
+        echo "   建议先执行：菜单 3) 安装/更新依赖"
+        read -r -p "是否现在自动在 venv 中安装？(y/n): " ans
+        if [[ "$ans" =~ ^[yY]$ ]]; then
+            "$VPY" -m pip install -U pip setuptools wheel
+            "$VPY" -m pip install -U requests pyyaml json5
+        else
+            return 1
+        fi
+    fi
+
+    # 二次确认
+    if ! "$VPY" -c "import requests, yaml, json5; print('✅ imports ok')" ; then
+        echo "❌ 依赖仍然不完整（可能网络/pip源问题）。"
+        echo "   你可以尝试：$VPY -m pip install -U requests pyyaml json5 -i https://pypi.tuna.tsinghua.edu.cn/simple"
         return 1
     fi
 
