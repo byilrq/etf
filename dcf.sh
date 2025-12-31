@@ -44,40 +44,127 @@ ensure_dcf_dir() {
 # ============================================
 update_rely() {
     ensure_dcf_dir
-
     echo "================================="
     echo "开始安装/更新依赖..."
     echo "目标目录: $DCF_DIR"
+    echo "虚拟环境: $VENV_DIR"
     echo "================================="
 
-    # 1) 系统依赖：python3 / venv / pip
-    echo "[1/3] 安装系统依赖（python3-venv / python3-pip 等）"
-    sudo apt update -y
-    sudo apt install -y python3 python3-venv python3-pip ca-certificates curl wget
+    # ---------- 基本检查 ----------
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "❌ 未检测到 sudo，无法安装系统依赖。请用 root 运行或手动安装 python3-venv/python3-pip。"
+        return 1
+    fi
 
-    # 2) 创建/更新虚拟环境
-    echo "[2/3] 准备虚拟环境: $VENV_DIR"
+    # ---------- 1) 系统依赖 ----------
+    echo "[1/4] 安装系统依赖（python3-venv / python3-pip 等）"
+    # 常见：apt 锁/网络问题提示
+    if ! sudo apt-get update -y; then
+        echo "❌ apt-get update 失败。可能是网络/源/锁占用问题。"
+        echo "   你可以先执行：sudo lsof /var/lib/dpkg/lock-frontend 或等待系统自动更新完成。"
+        return 1
+    fi
+
+    # 这些包覆盖绝大多数场景；build-essential 用于某些包编译（虽不一定需要，但更稳）
+    if ! sudo apt-get install -y \
+        python3 python3-venv python3-pip \
+        ca-certificates curl wget \
+        build-essential; then
+        echo "❌ apt-get install 失败。"
+        return 1
+    fi
+
+    # ---------- 2) 创建/更新虚拟环境 ----------
+    echo "[2/4] 准备虚拟环境: $VENV_DIR"
+
+    # 如果 venv 目录存在但已损坏（缺少 python），则重建
+    if [ -d "$VENV_DIR" ] && [ ! -x "$VENV_DIR/bin/python" ]; then
+        echo "⚠️ 检测到虚拟环境可能损坏（缺少 $VENV_DIR/bin/python），将重建..."
+        rm -rf "$VENV_DIR"
+    fi
+
     if [ ! -d "$VENV_DIR" ]; then
-        "$PYTHON_CMD" -m venv "$VENV_DIR"
+        # 优先用 python3 创建 venv，避免 $PYTHON_CMD 指向不稳定
+        if ! python3 -m venv "$VENV_DIR"; then
+            echo "❌ 创建虚拟环境失败。"
+            return 1
+        fi
     fi
 
     # shellcheck disable=SC1090
-    source "$VENV_DIR/bin/activate"
+    source "$VENV_DIR/bin/activate" || {
+        echo "❌ 激活虚拟环境失败。"
+        return 1
+    }
 
-    python -m pip install -U pip setuptools wheel
+    # 统一用 venv 里的 python/pip（避免用到系统 pip）
+    local VPY="$VENV_DIR/bin/python"
+    local VPIP="$VENV_DIR/bin/pip"
 
-    # 3) 安装 Python 依赖（根据你的 dcf.py 代码：requests / pyyaml / json5）
-    echo "[3/3] 安装 Python 依赖（requests / pyyaml / json5）"
-    pip install -U requests pyyaml json5
+    echo "   使用 Python: $($VPY -V 2>/dev/null)"
+    echo "   使用 pip:    $($VPIP -V 2>/dev/null)"
+
+    echo "[3/4] 升级 pip/setuptools/wheel"
+    if ! $VPY -m pip install -U pip setuptools wheel; then
+        echo "❌ pip 基础组件升级失败。"
+        deactivate || true
+        return 1
+    fi
+
+    # ---------- 3) 安装 Python 依赖 ----------
+    echo "[4/4] 安装 Python 依赖"
+
+    # 如果你以后维护 requirements.txt，就优先用它
+    # 示例 requirements.txt:
+    # requests
+    # pyyaml
+    # json5
+    if [ -f "$DCF_DIR/requirements.txt" ]; then
+        echo "   检测到 requirements.txt，按其安装/更新依赖..."
+        if ! $VPY -m pip install -U -r "$DCF_DIR/requirements.txt"; then
+            echo "❌ requirements.txt 安装失败。"
+            deactivate || true
+            return 1
+        fi
+    else
+        echo "   未检测到 requirements.txt，安装默认依赖（requests / pyyaml / json5）"
+        if ! $VPY -m pip install -U requests pyyaml json5; then
+            echo "❌ 依赖安装失败。"
+            deactivate || true
+            return 1
+        fi
+    fi
+
+    # ---------- 自检：import 测试 ----------
+    echo "   进行依赖自检（import requests/yaml/json5）..."
+    if ! $VPY - <<'PY'
+import sys
+ok = True
+for mod in ("requests", "yaml", "json5"):
+    try:
+        __import__(mod)
+        print(f"✅ import {mod} OK")
+    except Exception as e:
+        ok = False
+        print(f"❌ import {mod} FAILED: {e}")
+sys.exit(0 if ok else 1)
+PY
+    then
+        echo "❌ 依赖自检未通过。请检查网络、pip 源或 Python 版本。"
+        deactivate || true
+        return 1
+    fi
 
     echo "================================="
     echo "依赖安装完成 ✅"
-    echo "当前 Python: $(python -V)"
-    echo "pip: $(pip -V)"
+    echo "Python: $($VPY -V)"
+    echo "pip:    $($VPIP -V)"
     echo "================================="
 
     deactivate || true
+    return 0
 }
+
 
 # ============================================
 # 写入/更新 Push 配置文件（push.conf）
